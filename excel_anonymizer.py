@@ -117,6 +117,14 @@ def col_to_index(col: str) -> int:
     return n
 
 
+def index_to_col(n: int) -> str:
+    out = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(65 + rem) + out
+    return out
+
+
 def split_ref(ref: str) -> tuple[int, int] | None:
     m = re.fullmatch(r"([A-Z]+)(\d+)", ref)
     return (col_to_index(m.group(1)), int(m.group(2))) if m else None
@@ -770,12 +778,54 @@ def remove_hidden_sheets(pkg: Package, opts: Options, actions: list[str]) -> Non
         actions.append(f"Onglet masqué supprimé : « {s.name} »")
 
 
+def reset_sheet_view(sheet_root: etree._Element) -> None:
+    """Replace le défilement en haut de la feuille et la sélection en A1.
+
+    Avec des volets figés, A1 appartient au volet figé : on replace alors chaque
+    volet à son origine (première cellule sous/à droite de la zone figée) pour
+    rester cohérent avec les volets définis dans le fichier.
+    """
+    if local(sheet_root) != "worksheet":  # feuille de graphique : pas de cellules
+        return
+    for sv in sheet_root.iter(q(NS_MAIN, "sheetView")):
+        sv.attrib.pop("topLeftCell", None)
+        pane = sv.find(q(NS_MAIN, "pane"))
+        selections = sv.findall(q(NS_MAIN, "selection"))
+        if pane is None:
+            for sel in selections:
+                sv.remove(sel)
+            children = [c for c in sv if local(c) == "pane"]
+            sel = etree.Element(q(NS_MAIN, "selection"))
+            sel.set("activeCell", "A1")
+            sel.set("sqref", "A1")
+            sv.insert(len(children), sel)
+            continue
+        if pane.get("state") not in ("frozen", "frozenSplit"):
+            continue  # volets fractionnés (non figés) : tailles en twips, on n'y touche pas
+        try:
+            cols, rows = int(float(pane.get("xSplit", "0"))), int(float(pane.get("ySplit", "0")))
+        except ValueError:
+            continue
+        origins = {
+            "topLeft": "A1",
+            "topRight": f"{index_to_col(cols + 1)}1",
+            "bottomLeft": f"A{rows + 1}",
+            "bottomRight": f"{index_to_col(cols + 1)}{rows + 1}",
+        }
+        pane.set("topLeftCell", f"{index_to_col(cols + 1)}{rows + 1}")
+        for sel in selections:
+            cell = origins.get(sel.get("pane", "topLeft"), "A1")
+            sel.set("activeCell", cell)
+            sel.set("sqref", cell)
+
+
 def select_first_sheet(pkg: Package, actions: list[str]) -> None:
     """Fait en sorte que le classeur s'ouvre sur la première feuille visible.
 
     Met à jour l'onglet actif du classeur et retire la sélection de toutes les
     autres feuilles (plusieurs feuilles sélectionnées = « mode groupe » dans
-    Excel, où une saisie se répercute sur chacune d'elles).
+    Excel, où une saisie se répercute sur chacune d'elles). Sur chaque feuille,
+    le défilement est remis en haut et la cellule active en A1.
     """
     sheets = [s for s in pkg.sheets() if s.part]
     first = next((s for s in sheets if s.state == "visible"), None)
@@ -790,7 +840,12 @@ def select_first_sheet(pkg: Package, actions: list[str]) -> None:
                 sv.set("tabSelected", "1")
             else:
                 sv.attrib.pop("tabSelected", None)
-    actions.append(f"Le classeur s'ouvrira sur la première feuille : « {first.name} »")
+    for s in sheets:
+        reset_sheet_view(pkg.root(s.part))
+    actions.append(
+        f"Le classeur s'ouvrira sur la première feuille : « {first.name} » ; "
+        "sur chaque feuille : cellule active A1 et défilement en haut"
+    )
 
 
 def convert_formulas_to_values(pkg: Package, hidden: list[SheetInfo], hidden_parts: set[str | None]) -> int:

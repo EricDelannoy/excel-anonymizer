@@ -42,7 +42,7 @@ Le script affiche un audit avant nettoyage, la liste des actions, puis un audit 
 - chemin absolu du fichier d'origine, nom d'utilisateur de partage ;
 - sujet, mots-clés, description, catégorie.
 
-Le classeur est aussi réglé pour **s'ouvrir sur la première feuille visible**, avec une seule feuille sélectionnée.
+Le classeur est aussi réglé pour **s'ouvrir sur la première feuille visible**, avec une seule feuille sélectionnée. Sur **chaque feuille**, le défilement est remis en haut et la cellule active en A1 (avec des volets figés, la vue est replacée à l'origine de chaque volet ; les volets fractionnés non figés ne sont pas modifiés).
 
 ## Ce qui est détecté (rapport)
 

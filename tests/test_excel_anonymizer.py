@@ -258,3 +258,59 @@ def test_opens_on_first_visible_sheet_when_first_is_hidden_and_kept(tmp_path):
 
 def test_empty_author_rejected(src):
     assert ea.main([str(src), "--author", "  "]) == 2
+
+
+def test_first_sheet_view_reset_to_a1(tmp_path):
+    p = tmp_path / "scrolled.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    for r in range(1, 60):
+        ws.append([r, r * 2, r * 3])
+    ws.sheet_view.topLeftCell = "F40"
+    ws.sheet_view.selection[0].activeCell = "H45"
+    ws.sheet_view.selection[0].sqref = "H45:J47"
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    sv = load_workbook(out).active.sheet_view
+    assert sv.topLeftCell is None
+    assert [(s.activeCell, s.sqref) for s in sv.selection] == [("A1", "A1")]
+
+
+def test_first_sheet_view_reset_with_frozen_panes(tmp_path):
+    p = tmp_path / "frozen.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    for r in range(1, 60):
+        ws.append([r, r * 2, r * 3, r * 4])
+    ws.freeze_panes = "B3"
+    ws.sheet_view.pane.topLeftCell = "D30"  # défilé vers le bas / la droite
+    for sel in ws.sheet_view.selection:
+        sel.activeCell = sel.sqref = "D30"
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    sv = load_workbook(out).active.sheet_view
+    assert sv.pane.topLeftCell == "B3"
+    assert sv.pane.state == "frozen"
+    assert {(s.pane, s.activeCell) for s in sv.selection} <= {
+        ("topRight", "B1"), ("bottomLeft", "A3"), ("bottomRight", "B3"),
+    }
+
+
+def test_every_sheet_view_is_reset(tmp_path):
+    p = tmp_path / "two.xlsx"
+    wb = Workbook()
+    wb.active.title = "Un"
+    other = wb.create_sheet("Deux")
+    other.sheet_view.topLeftCell = "C10"
+    other.sheet_view.selection[0].activeCell = "C12"
+    other.sheet_view.selection[0].sqref = "C12"
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    res = load_workbook(out)
+    assert res.active.title == "Un"
+    sv = res["Deux"].sheet_view
+    assert sv.topLeftCell is None
+    assert [(s.activeCell, s.sqref) for s in sv.selection] == [("A1", "A1")]
