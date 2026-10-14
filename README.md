@@ -10,6 +10,8 @@ Le fichier d'origine n'est jamais modifié (sortie : `<nom>.clean.xlsx`). Le tra
 pip install -r requirements.txt
 ```
 
+Prérequis : Python 3.10+ et `lxml` 4.9.2 ou plus récent (testé avec lxml 4.9.2 sur Python 3.11, et avec lxml 6.x sur Python 3.13).
+
 ## Utilisation
 
 ```bash
