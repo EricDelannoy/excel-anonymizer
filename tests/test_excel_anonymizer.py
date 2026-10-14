@@ -223,3 +223,38 @@ def test_libreoffice_can_open_result(src, tmp_path):
     )
     assert res.returncode == 0
     assert "Produit" in next(conv.glob("*.csv")).read_text()
+
+
+def test_opens_on_first_sheet(tmp_path):
+    p = tmp_path / "multi.xlsx"
+    wb = Workbook()
+    wb.active.title = "Un"
+    wb.create_sheet("Deux")
+    wb.create_sheet("Trois")
+    wb.active = 2  # le classeur s'ouvrirait sur « Trois »
+    wb["Un"].sheet_view.tabSelected = True
+    wb["Trois"].sheet_view.tabSelected = True  # mode groupe
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    res = load_workbook(out)
+    assert res.active.title == "Un"
+    assert [ws.sheet_view.tabSelected for ws in res.worksheets] == [True, None] + [None]
+
+
+def test_opens_on_first_visible_sheet_when_first_is_hidden_and_kept(tmp_path):
+    p = tmp_path / "hid_first.xlsx"
+    wb = Workbook()
+    wb.active.title = "Cache"
+    wb.create_sheet("Visible1")
+    wb.create_sheet("Visible2")
+    wb["Cache"].sheet_state = "hidden"
+    wb.active = 2
+    wb.save(p)
+    code, out = run(p, "--keep-hidden-sheets")
+    assert code == 0
+    assert load_workbook(out).active.title == "Visible1"
+
+
+def test_empty_author_rejected(src):
+    assert ea.main([str(src), "--author", "  "]) == 2

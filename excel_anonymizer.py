@@ -766,20 +766,31 @@ def remove_hidden_sheets(pkg: Package, opts: Options, actions: list[str]) -> Non
         if rel.get("Id") in {s.rid for s in hidden}:
             pkg.remove_rel(wb_part, rel)
 
-    # Vue active cohérente.
-    for view in wb.iter(q(NS_MAIN, "workbookView")):
-        view.set("activeTab", "0")
+    for s in hidden:
+        actions.append(f"Onglet masqué supprimé : « {s.name} »")
+
+
+def select_first_sheet(pkg: Package, actions: list[str]) -> None:
+    """Fait en sorte que le classeur s'ouvre sur la première feuille visible.
+
+    Met à jour l'onglet actif du classeur et retire la sélection de toutes les
+    autres feuilles (plusieurs feuilles sélectionnées = « mode groupe » dans
+    Excel, où une saisie se répercute sur chacune d'elles).
+    """
+    sheets = [s for s in pkg.sheets() if s.part]
+    first = next((s for s in sheets if s.state == "visible"), None)
+    if first is None:
+        return
+    for view in pkg.root(pkg.workbook_part).iter(q(NS_MAIN, "workbookView")):
+        view.set("activeTab", str(first.index))
         view.set("firstSheet", "0")
-    remaining = [s for s in pkg.sheets() if s.part]
-    for i, s in enumerate(remaining):
+    for s in sheets:
         for sv in pkg.root(s.part).iter(q(NS_MAIN, "sheetView")):
-            if i == 0:
+            if s is first:
                 sv.set("tabSelected", "1")
             else:
                 sv.attrib.pop("tabSelected", None)
-
-    for s in hidden:
-        actions.append(f"Onglet masqué supprimé : « {s.name} »")
+    actions.append(f"Le classeur s'ouvrira sur la première feuille : « {first.name} »")
 
 
 def convert_formulas_to_values(pkg: Package, hidden: list[SheetInfo], hidden_parts: set[str | None]) -> int:
@@ -881,6 +892,7 @@ def clean(pkg: Package, opts: Options) -> list[str]:
     if opts.purge_hidden_cells:
         purge_hidden_cells(pkg, actions)
     clean_workbook_xml(pkg, actions)
+    select_first_sheet(pkg, actions)
     compact_shared_strings(pkg, actions)
     garbage = pkg.collect_garbage()
     if garbage:
@@ -910,7 +922,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", type=Path, help="classeur .xlsx ou .xlsm à traiter")
     p.add_argument("-o", "--output", type=Path, help="fichier de sortie (défaut : <nom>.clean.<ext>)")
     p.add_argument("--in-place", action="store_true", help="écrase le fichier d'origine (déconseillé)")
-    p.add_argument("--author", default="Anonyme", help="pseudonyme utilisé à la place de l'auteur (défaut : Anonyme)")
+    p.add_argument("-a", "--author", default="Anonyme", metavar="NOM",
+                   help="nom inscrit comme auteur et dernier modificateur du fichier "
+                        "(et des commentaires) à la place de l'auteur d'origine (défaut : Anonyme)")
     p.add_argument("--audit-only", action="store_true", help="affiche seulement le rapport, sans rien écrire")
     p.add_argument("--keep-hidden-sheets", action="store_true", help="ne supprime pas les onglets masqués")
     p.add_argument("--remove-comments", action="store_true", help="supprime aussi les commentaires et notes")
@@ -924,6 +938,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.author = args.author.strip()
+    if not args.author:
+        print("Erreur : le nom de l'auteur ne peut pas être vide.", file=sys.stderr)
+        return 2
     src: Path = args.input
     if not src.is_file():
         print(f"Erreur : fichier introuvable : {src}", file=sys.stderr)

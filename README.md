@@ -17,7 +17,7 @@ Prérequis : Python 3.10+ et `lxml` 4.9.2 ou plus récent (testé avec lxml 4.9.
 ```bash
 python excel_anonymizer.py classeur.xlsx                  # -> classeur.clean.xlsx
 python excel_anonymizer.py classeur.xlsx --audit-only     # rapport seul, rien n'est écrit
-python excel_anonymizer.py classeur.xlsx -o propre.xlsx --author "Service Finance"
+python excel_anonymizer.py classeur.xlsx -o propre.xlsx --author "Service Finance"   # nom d'auteur au choix
 ```
 
 Le script affiche un audit avant nettoyage, la liste des actions, puis un audit du fichier produit.
@@ -26,7 +26,7 @@ Le script affiche un audit avant nettoyage, la liste des actions, puis un audit 
 |---|---|
 | `-o, --output` | fichier de sortie |
 | `--in-place` | écrase le fichier d'origine (déconseillé) |
-| `--author NOM` | pseudonyme à utiliser (défaut : `Anonyme`) |
+| `-a, --author NOM` | nom inscrit comme auteur et dernier modificateur, ainsi que pour les commentaires (défaut : `Anonyme`) |
 | `--audit-only` | affiche seulement le rapport |
 | `--keep-hidden-sheets` | conserve les onglets masqués |
 | `--remove-comments` | supprime aussi commentaires et notes |
@@ -36,11 +36,13 @@ Le script affiche un audit avant nettoyage, la liste des actions, puis un audit 
 
 ## Ce qui est anonymisé
 
-- auteur et dernier modificateur (`docProps/core.xml`), dates de création/modification (remplacées par la date du traitement) ;
+- auteur et dernier modificateur (`docProps/core.xml`), remplacés par `Anonyme` ou par le nom choisi avec `--author`, dates de création/modification (remplacées par la date du traitement) ;
 - société, responsable et liste des noms d'onglets (`docProps/app.xml`) ;
 - auteurs des commentaires, personnes des commentaires modernes ;
 - chemin absolu du fichier d'origine, nom d'utilisateur de partage ;
 - sujet, mots-clés, description, catégorie.
+
+Le classeur est aussi réglé pour **s'ouvrir sur la première feuille visible**, avec une seule feuille sélectionnée.
 
 ## Ce qui est détecté (rapport)
 
