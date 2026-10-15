@@ -1,3 +1,4 @@
+import re
 import subprocess
 import sys
 import zipfile
@@ -62,22 +63,28 @@ def run(src, *args):
     return code, out
 
 
-def test_author_is_anonymized(src):
+def test_author_is_removed_by_default(src):
     assert PERSON in all_text(src)
     code, out = run(src)
     assert code == 0
-    text = all_text(out)
-    assert PERSON not in text
+    assert PERSON not in all_text(out)
     wb = load_workbook(out)
-    assert wb.properties.creator == "Anonyme"
-    assert wb.properties.lastModifiedBy == "Anonyme"
+    assert not wb.properties.creator
+    assert not wb.properties.lastModifiedBy
     assert wb.properties.description is None
+    with zipfile.ZipFile(out) as zf:
+        core = zf.read("docProps/core.xml").decode()
+    assert re.search(r"<dc:creator[^>]*>\s*</dc:creator>|<dc:creator[^>]*/>", core)
+    assert re.search(r"<cp:lastModifiedBy>\s*</cp:lastModifiedBy>|<cp:lastModifiedBy/>", core)
+    assert "Anonyme" not in all_text(out)
 
 
 def test_custom_author(src):
     code, out = run(src, "--author", "Équipe")
     assert code == 0
-    assert load_workbook(out).properties.creator == "Équipe"
+    wb = load_workbook(out)
+    assert wb.properties.creator == "Équipe"
+    assert wb.properties.lastModifiedBy == "Équipe"
 
 
 def test_hidden_sheets_removed_and_data_purged(src):
@@ -124,7 +131,13 @@ def test_audit_only_writes_nothing(src, capsys):
 def test_comments_authors_anonymized_and_removable(src):
     code, out = run(src)
     assert code == 0
-    assert load_workbook(out)["Public"]["A8"].comment.author == "Anonyme"
+    assert load_workbook(out)["Public"]["A8"].comment.text == "à vérifier"
+    with zipfile.ZipFile(out) as zf:
+        authors = zf.read("xl/comments/comment1.xml").decode()
+    assert re.search(r"<authors>\s*<author>\s*</author>\s*</authors>|<authors>\s*<author/>\s*</authors>", authors)
+    assert PERSON not in all_text(out)
+    code, out = run(src, "--author", "Équipe")
+    assert load_workbook(out)["Public"]["A8"].comment.author == "Équipe"
     code, out = run(src, "--remove-comments")
     assert code == 0
     assert load_workbook(out)["Public"]["A8"].comment is None
@@ -256,10 +269,6 @@ def test_opens_on_first_visible_sheet_when_first_is_hidden_and_kept(tmp_path):
     assert load_workbook(out).active.title == "Visible1"
 
 
-def test_empty_author_rejected(src):
-    assert ea.main([str(src), "--author", "  "]) == 2
-
-
 def test_first_sheet_view_reset_to_a1(tmp_path):
     p = tmp_path / "scrolled.xlsx"
     wb = Workbook()
@@ -291,11 +300,50 @@ def test_first_sheet_view_reset_with_frozen_panes(tmp_path):
     code, out = run(p)
     assert code == 0
     sv = load_workbook(out).active.sheet_view
-    assert sv.pane.topLeftCell == "B3"
     assert sv.pane.state == "frozen"
-    assert {(s.pane, s.activeCell) for s in sv.selection} <= {
-        ("topRight", "B1"), ("bottomLeft", "A3"), ("bottomRight", "B3"),
-    }
+    assert sv.pane.topLeftCell == "B3"  # zone défilante revenue en haut
+    assert sv.pane.activePane == "topLeft"  # volet actif = volet figé contenant A1
+    by_pane = {s.pane or "topLeft": s.activeCell for s in sv.selection}
+    assert by_pane["topLeft"] == "A1"  # cellule active : A1
+    assert by_pane["bottomRight"] == "B3"
+
+
+def test_active_cell_a1_with_row_only_freeze(tmp_path):
+    p = tmp_path / "frozen_row.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    for r in range(1, 40):
+        ws.append([r, r])
+    ws.freeze_panes = "A2"
+    ws.sheet_view.selection[-1].activeCell = ws.sheet_view.selection[-1].sqref = "B30"
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    sv = load_workbook(out).active.sheet_view
+    assert sv.pane.topLeftCell == "A2" and sv.pane.activePane == "topLeft"
+    assert {s.pane or "topLeft": s.activeCell for s in sv.selection} == {"topLeft": "A1", "bottomLeft": "A2"}
+
+
+def test_frozen_result_opens_in_libreoffice(tmp_path):
+    import shutil
+
+    soffice = shutil.which("soffice")
+    if not soffice:
+        pytest.skip("LibreOffice absent")
+    p = tmp_path / "frozen2.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    for r in range(1, 30):
+        ws.append([f"l{r}", r, r])
+    ws.freeze_panes = "B2"
+    wb.save(p)
+    code, out = run(p)
+    assert code == 0
+    res = subprocess.run(
+        [soffice, "--headless", "--convert-to", "csv", "--outdir", str(tmp_path / "c"), str(out)],
+        capture_output=True, timeout=120,
+    )
+    assert res.returncode == 0 and "l1" in next((tmp_path / "c").glob("*.csv")).read_text()
 
 
 def test_every_sheet_view_is_reset(tmp_path):
@@ -314,3 +362,26 @@ def test_every_sheet_view_is_reset(tmp_path):
     sv = res["Deux"].sheet_view
     assert sv.topLeftCell is None
     assert [(s.activeCell, s.sqref) for s in sv.selection] == [("A1", "A1")]
+
+
+def test_default_run_opens_in_libreoffice_with_empty_author(src, tmp_path):
+    import shutil
+
+    soffice = shutil.which("soffice")
+    if not soffice:
+        pytest.skip("LibreOffice absent")
+    code, out = run(src)
+    assert code == 0
+    res = subprocess.run(
+        [soffice, "--headless", "--convert-to", "csv", "--outdir", str(tmp_path / "c"), str(out)],
+        capture_output=True, timeout=120,
+    )
+    assert res.returncode == 0 and "Produit" in next((tmp_path / "c").glob("*.csv")).read_text()
+
+
+def test_workbook_stays_readable_by_openpyxl(src):
+    """Pas d'attribut propriétaire que openpyxl ne saurait relire."""
+    code, out = run(src)
+    assert code == 0
+    assert "removePersonalInformation" not in all_text(out)
+    load_workbook(out)

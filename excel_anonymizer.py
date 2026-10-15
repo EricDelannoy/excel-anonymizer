@@ -75,7 +75,7 @@ class Finding:
 
 @dataclass
 class Options:
-    author: str = "Anonyme"
+    author: str = ""  # vide par défaut : auteur et dernier modificateur supprimés
     keep_hidden_sheets: bool = False
     remove_comments: bool = False
     purge_hidden_cells: bool = False
@@ -610,7 +610,10 @@ def anonymize_properties(pkg: Package, opts: Options, actions: list[str]) -> Non
                     el = root.find(q(NS_DCTERMS, tag))
                     if el is not None:
                         el.text = now
-            actions.append(f"Auteur et dernier modificateur remplacés par « {opts.author} »")
+            if opts.author:
+                actions.append(f"Auteur et dernier modificateur remplacés par « {opts.author} »")
+            else:
+                actions.append("Auteur et dernier modificateur supprimés (champs vides)")
         elif kind == "extended-properties" and target:
             # Réécrit app.xml au strict minimum : supprime société, responsable
             # et la liste des noms d'onglets (qui révélerait les onglets masqués).
@@ -645,7 +648,8 @@ def anonymize_comment_authors(pkg: Package, opts: Options, actions: list[str]) -
             p.set("providerId", "None")
             n += 1
     if n:
-        actions.append(f"{n} auteur(s) de commentaires anonymisé(s)")
+        label = "anonymisé(s)" if opts.author else "vidé(s)"
+        actions.append(f"{n} auteur(s) de commentaires {label}")
 
 
 def remove_always_unneeded(pkg: Package, actions: list[str]) -> None:
@@ -779,44 +783,54 @@ def remove_hidden_sheets(pkg: Package, opts: Options, actions: list[str]) -> Non
 
 
 def reset_sheet_view(sheet_root: etree._Element) -> None:
-    """Replace le défilement en haut de la feuille et la sélection en A1.
+    """Replace le défilement en haut de la feuille et la cellule active en A1.
 
-    Avec des volets figés, A1 appartient au volet figé : on replace alors chaque
-    volet à son origine (première cellule sous/à droite de la zone figée) pour
-    rester cohérent avec les volets définis dans le fichier.
+    Avec des volets figés, A1 se trouve dans le volet figé (en haut à gauche) :
+    ce volet devient le volet actif, et les autres volets sont replacés à leur
+    origine (première cellule sous/à droite de la zone figée).
     """
     if local(sheet_root) != "worksheet":  # feuille de graphique : pas de cellules
         return
+
+    def selection(cell: str, pane_name: str | None = None) -> etree._Element:
+        sel = etree.Element(q(NS_MAIN, "selection"))
+        if pane_name:
+            sel.set("pane", pane_name)
+        sel.set("activeCell", cell)
+        sel.set("sqref", cell)
+        return sel
+
     for sv in sheet_root.iter(q(NS_MAIN, "sheetView")):
         sv.attrib.pop("topLeftCell", None)
         pane = sv.find(q(NS_MAIN, "pane"))
-        selections = sv.findall(q(NS_MAIN, "selection"))
-        if pane is None:
-            for sel in selections:
-                sv.remove(sel)
-            children = [c for c in sv if local(c) == "pane"]
-            sel = etree.Element(q(NS_MAIN, "selection"))
-            sel.set("activeCell", "A1")
-            sel.set("sqref", "A1")
-            sv.insert(len(children), sel)
-            continue
-        if pane.get("state") not in ("frozen", "frozenSplit"):
+        if pane is not None and pane.get("state") not in ("frozen", "frozenSplit"):
             continue  # volets fractionnés (non figés) : tailles en twips, on n'y touche pas
-        try:
-            cols, rows = int(float(pane.get("xSplit", "0"))), int(float(pane.get("ySplit", "0")))
-        except ValueError:
-            continue
-        origins = {
-            "topLeft": "A1",
-            "topRight": f"{index_to_col(cols + 1)}1",
-            "bottomLeft": f"A{rows + 1}",
-            "bottomRight": f"{index_to_col(cols + 1)}{rows + 1}",
-        }
-        pane.set("topLeftCell", f"{index_to_col(cols + 1)}{rows + 1}")
-        for sel in selections:
-            cell = origins.get(sel.get("pane", "topLeft"), "A1")
-            sel.set("activeCell", cell)
-            sel.set("sqref", cell)
+        cols = rows = 0
+        if pane is not None:
+            try:
+                cols, rows = int(float(pane.get("xSplit", "0"))), int(float(pane.get("ySplit", "0")))
+            except ValueError:
+                continue
+        for sel in sv.findall(q(NS_MAIN, "selection")):
+            sv.remove(sel)
+        # Sélection du volet en haut à gauche (volet par défaut) : A1, cellule active.
+        new_selections = [selection("A1")]
+        if pane is not None:
+            pane.attrib.pop("activePane", None)  # défaut du schéma : topLeft
+            pane.set("topLeftCell", f"{index_to_col(cols + 1)}{rows + 1}")
+            if cols and rows:
+                new_selections += [
+                    selection(f"{index_to_col(cols + 1)}1", "topRight"),
+                    selection(f"A{rows + 1}", "bottomLeft"),
+                    selection(f"{index_to_col(cols + 1)}{rows + 1}", "bottomRight"),
+                ]
+            elif cols:
+                new_selections.append(selection(f"{index_to_col(cols + 1)}1", "topRight"))
+            elif rows:
+                new_selections.append(selection(f"A{rows + 1}", "bottomLeft"))
+        pos = 1 if pane is not None else 0
+        for i, sel in enumerate(new_selections):
+            sv.insert(pos + i, sel)
 
 
 def select_first_sheet(pkg: Package, actions: list[str]) -> None:
@@ -977,9 +991,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", type=Path, help="classeur .xlsx ou .xlsm à traiter")
     p.add_argument("-o", "--output", type=Path, help="fichier de sortie (défaut : <nom>.clean.<ext>)")
     p.add_argument("--in-place", action="store_true", help="écrase le fichier d'origine (déconseillé)")
-    p.add_argument("-a", "--author", default="Anonyme", metavar="NOM",
-                   help="nom inscrit comme auteur et dernier modificateur du fichier "
-                        "(et des commentaires) à la place de l'auteur d'origine (défaut : Anonyme)")
+    p.add_argument("-a", "--author", default="", metavar="NOM",
+                   help="nom à inscrire comme auteur et dernier modificateur (et auteur des commentaires). "
+                        "Par défaut, l'auteur est totalement supprimé (champs vides), comme avec "
+                        "« Inspecter le document » d'Excel")
     p.add_argument("--audit-only", action="store_true", help="affiche seulement le rapport, sans rien écrire")
     p.add_argument("--keep-hidden-sheets", action="store_true", help="ne supprime pas les onglets masqués")
     p.add_argument("--remove-comments", action="store_true", help="supprime aussi les commentaires et notes")
@@ -994,9 +1009,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.author = args.author.strip()
-    if not args.author:
-        print("Erreur : le nom de l'auteur ne peut pas être vide.", file=sys.stderr)
-        return 2
     src: Path = args.input
     if not src.is_file():
         print(f"Erreur : fichier introuvable : {src}", file=sys.stderr)

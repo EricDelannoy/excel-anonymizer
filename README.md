@@ -1,6 +1,6 @@
 # excel-anonymizer
 
-Script Python qui ouvre un classeur Excel (`.xlsx` / `.xlsm`), **anonymise l'auteur**, **détecte les données cachées et les onglets masqués**, et **supprime tout ce qui n'est pas nécessaire**.
+Script Python qui ouvre un classeur Excel (`.xlsx` / `.xlsm`), **supprime l'auteur et le dernier modificateur**, **détecte les données cachées et les onglets masqués**, et **supprime tout ce qui n'est pas nécessaire**.
 
 Le fichier d'origine n'est jamais modifié (sortie : `<nom>.clean.xlsx`). Le traitement se fait directement sur le XML du classeur, sans passer par openpyxl : graphiques, images, tableaux croisés dynamiques et mises en forme sont conservés.
 
@@ -17,7 +17,7 @@ Prérequis : Python 3.10+ et `lxml` 4.9.2 ou plus récent (testé avec lxml 4.9.
 ```bash
 python excel_anonymizer.py classeur.xlsx                  # -> classeur.clean.xlsx
 python excel_anonymizer.py classeur.xlsx --audit-only     # rapport seul, rien n'est écrit
-python excel_anonymizer.py classeur.xlsx -o propre.xlsx --author "Service Finance"   # nom d'auteur au choix
+python excel_anonymizer.py classeur.xlsx -o propre.xlsx --author "Service Finance"   # inscrit un nom d'auteur au choix
 ```
 
 Le script affiche un audit avant nettoyage, la liste des actions, puis un audit du fichier produit.
@@ -26,7 +26,7 @@ Le script affiche un audit avant nettoyage, la liste des actions, puis un audit 
 |---|---|
 | `-o, --output` | fichier de sortie |
 | `--in-place` | écrase le fichier d'origine (déconseillé) |
-| `-a, --author NOM` | nom inscrit comme auteur et dernier modificateur, ainsi que pour les commentaires (défaut : `Anonyme`) |
+| `-a, --author NOM` | inscrit ce nom comme auteur et dernier modificateur (et auteur des commentaires). **Par défaut, l'auteur est totalement supprimé** (champs vides). |
 | `--audit-only` | affiche seulement le rapport |
 | `--keep-hidden-sheets` | conserve les onglets masqués |
 | `--remove-comments` | supprime aussi commentaires et notes |
@@ -36,13 +36,28 @@ Le script affiche un audit avant nettoyage, la liste des actions, puis un audit 
 
 ## Ce qui est anonymisé
 
-- auteur et dernier modificateur (`docProps/core.xml`), remplacés par `Anonyme` ou par le nom choisi avec `--author`, dates de création/modification (remplacées par la date du traitement) ;
+- auteur et dernier modificateur (`docProps/core.xml`) : **champs laissés vides par défaut**, comme avec « Fichier > Informations > Inspecter le document » d'Excel (ou remplacés par le nom donné avec `--author`) ; dates de création/modification remplacées par la date du traitement ;
 - société, responsable et liste des noms d'onglets (`docProps/app.xml`) ;
 - auteurs des commentaires, personnes des commentaires modernes ;
 - chemin absolu du fichier d'origine, nom d'utilisateur de partage ;
 - sujet, mots-clés, description, catégorie.
 
 Le classeur est aussi réglé pour **s'ouvrir sur la première feuille visible**, avec une seule feuille sélectionnée. Sur **chaque feuille**, le défilement est remis en haut et la cellule active en A1 (avec des volets figés, la vue est replacée à l'origine de chaque volet ; les volets fractionnés non figés ne sont pas modifiés).
+
+### Comparaison avec « Inspecter le document » d'Excel
+
+| Catégorie de l'inspecteur | Ce script |
+|---|---|
+| Propriétés du document et informations personnelles (auteur, dernier modificateur, société, responsable…) | oui (auteur et dernier modificateur vides par défaut) |
+| Commentaires et annotations | auteurs vidés ; suppression avec `--remove-comments` |
+| Feuilles de calcul masquées | oui (supprimées) |
+| Lignes et colonnes masquées | signalées ; vidées avec `--purge-hidden-cells` |
+| Contenu invisible (objets masqués) | oui |
+| Données XML personnalisées | oui |
+| En-têtes et pieds de page | non |
+| Documents incorporés, données de modèle | signalés seulement |
+
+Le titre du document n'est pas modifié.
 
 ## Ce qui est détecté (rapport)
 
